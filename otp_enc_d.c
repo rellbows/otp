@@ -28,11 +28,12 @@
 #include <signal.h>
 
 #define BACKLOG 10    // how many pending connections queue will hold
+#define CHUNKSIZE 1000    // size of chunks that can be received
 
 void sigchld_handler(int s);
 void *get_in_addr(struct sockaddr *sa);
-int control_setup(char *serv_port);
-int data_setup(char *host, char *port);
+int connection_setup(char *serv_port);
+int msg_length(int sockfd);
 
 int main(int argc, char *argv[]){
 
@@ -40,33 +41,29 @@ int main(int argc, char *argv[]){
 	(void)argc;
 
 	// variables for control connection setup
-	int sockfd, control_fd;  // listen on sock_fd, new connection on new_fd
+	int sockfd, new_fd;  // listen on sock_fd, new connection on new_fd
 	char *serv_port;    // server port to listen on
 	struct sockaddr_storage their_addr; // connector's address information
 	socklen_t sin_size;
 	char s[INET6_ADDRSTRLEN];
 
 	// variables for data connecton setup
-	int data_sockfd = NULL;
-	int max_rec_buffer = 505;    // max size buffer that can be recieved
-	char rec_buffer[max_rec_buffer];    // holds message coming from client
-	char client_port[6];    // most digits a port num can have is 5
-	char client_name[239];
+	char recv_buffer[CHUNKSIZE];    // holds message coming from client
 
 	// get port num for server to run on from cmd line arg
 	serv_port = argv[1];
 
 	// setup control connection
-	sockfd = control_setup(serv_port);
+	sockfd = connection_setup(serv_port);
 
 	printf("Server open on %s\n", serv_port);
 
 	while(1){
 
 		sin_size = sizeof their_addr;
-		control_fd = accept(sockfd, (struct sockaddr *)&their_addr, &sin_size);
+		new_fd = accept(sockfd, (struct sockaddr *)&their_addr, &sin_size);
 
-		if(control_fd == -1){
+		if(new_fd == -1){
 			perror("accept");
 			continue;
 		}
@@ -80,15 +77,22 @@ int main(int argc, char *argv[]){
 
 			// BUFFER //
 			// get buffer from client
-			if(recv(control_fd, rec_buffer, max_rec_buffer, 0) == -1)
-				perror("receive");
+			
+			//if(recv(new_fd, recv_buffer, 1, 0) == -1)
+			//	perror("receive");
 
-			close(control_fd);    // close out control connection
+			//recv_buffer[1] = '\0';
+
+			//printf("%s\n", recv_buffer);
+
+			msg_length(new_fd);
+
+			close(new_fd);    // close out control connection
 
 			exit(0);	
 		}
 		
-		close(control_fd);
+		close(new_fd);
 	}
 
 	return 0;
@@ -119,7 +123,7 @@ void *get_in_addr(struct sockaddr *sa)
 // Description: handles all preliminary connection setup of control connection
 // Argument(s): string with port
 // Returns: integer with sockfd needed for connection
-int control_setup(char *serv_port){
+int connection_setup(char *serv_port){
 
 	int sockfd;
 	struct addrinfo hints, *servinfo, *p;
@@ -183,60 +187,58 @@ int control_setup(char *serv_port){
 	return sockfd;
 }
 
-// Description: handles all preliminary connection setup of data connection
-// Argument(s): string with destination host and port
-// Returns: integer with sockfd needed for connection
-int data_setup(char *host, char *port){
+/*
+ * Description: get incoming msg length
+ * Arugment(s): socket fd for connection
+ * Returns: size of the incoming msg (without the prepended size)
+ * Note: Can only return numbers with less than 19 or less digits.
+*/
+int msg_length(int sockfd){
 
-	// for connection setup
-	int sockfd;
-	//int numbytes;
-	struct addrinfo hints, *servinfo, *p;
-	int rv;
-	char s[INET6_ADDRSTRLEN];
+	// var setup
+	char str_msg_length[20];    // only holds numbers with 19or less digits
+	int msg_length = 0;
+	char digit[1];
+	int i = 0;
 
-	memset(&hints, 0, sizeof hints); // clear the contents of the addrinfo struct
-	hints.ai_family = AF_UNSPEC; // make the struct IP agnostic
-	hints.ai_socktype = SOCK_STREAM; // TCP stream sockets
-	hints.ai_flags = AI_PASSIVE; // fill in my IP for me
+	// get all the digits from the prepended msg length on msg
+	recv(sockfd, digit, 1, 0);
 
-	// check results of call to getaddrinfo(), if not 0 then error.
-	// if 0, then the required structs setup successfully and 
-	// returns a pointer to a linked-lists of results
+	while(digit[0] != ' '){
 
-	if((rv = getaddrinfo(host, port, &hints, &servinfo)) != 0){
-		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
-		return 1;
-	}
-
-	// loop through all the results and connect to the first we can
-	for(p = servinfo; p != NULL; p = p->ai_next){
-		if((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1){
-			perror("client: socket");
-			continue;
+		// check to ensure not going over 19 digit limit
+		if(i >= 20){
+			printf("Error! Message to to large.\n");
+			exit(1);
 		}
 
-		if(connect(sockfd, p->ai_addr, p->ai_addrlen) == -1){
-			perror("client: connect");
-			close(sockfd);
-			continue;
-		}
+		// testing
+		printf("i in msg_lengt: %d\n", i);
 
-		break;
+		// add to string
+		str_msg_length[i] = digit[0];
+		i++;
+		
+		// get next char
+		recv(sockfd, digit, 1, 0);	
 	}
 
-	// checks connections
-	if(p == NULL){
-		fprintf(stderr, "client: failed to connect\n");
-		return 2;
+	str_msg_length[++i] = '\0';
+
+	// testing
+	printf("str_msg_length: %s\n", str_msg_length);
+
+	msg_length = atoi(str_msg_length);
+
+	if(msg_length == 0){
+		printf("Error! Issue getting message length.\n");
+		exit(1);
 	}
+	
+	// testing
+	printf("msg_length: %d\n", msg_length);
 
-	inet_ntop(p->ai_family, get_in_addr((struct sockaddr *)p->ai_addr), s, sizeof s);
-	printf("client: connecting to %s\n", s);
-
-	freeaddrinfo(servinfo); // free up memory allocated to servinfo	
-
-	return sockfd;
+	return msg_length;
 }
 
 /*
