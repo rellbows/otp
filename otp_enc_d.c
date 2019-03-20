@@ -131,10 +131,6 @@ int main(int argc, char *argv[]){
 				close(new_fd);
 			}
 
-			// testing
-			printf("plaintext lengt: %d\n", plaintext_msg_length);
-			fflush(stdout);
-
 			// allocate enough mem for plaintext msg
 			plaintext_msg = malloc(plaintext_msg_length * sizeof(char));
 			memset(plaintext_msg, '\0', plaintext_msg_length * sizeof(char));
@@ -147,10 +143,6 @@ int main(int argc, char *argv[]){
 			
 			// get plaintext msg
 			recv_all(new_fd, plaintext_msg, plaintext_msg_length);
-
-			// testing
-			printf("Plaintext: %s\n", plaintext_msg);
-			fflush(stdout);		
 
 			// get length of cipherkey msg incoming
 			cipherkey_msg_length = get_msg_length(new_fd);
@@ -165,13 +157,9 @@ int main(int argc, char *argv[]){
 				return 1;
 			}
 			
-			// get plaintext msg
+			// get cipherkey msg
 			recv_all(new_fd, cipherkey_msg, cipherkey_msg_length);
 
-			// testing
-			printf("Cipherkey: %s\n", cipherkey_msg);
-			fflush(stdout);
-	
 			// encode msg
 			ciphertext_msg_length = plaintext_msg_length;
 			
@@ -330,8 +318,6 @@ int get_msg_length(int sockfd){
 	}
 
 	while(digit[0] != ' '){
-		// testing
-		printf("%c\n", digit[0]);
 		
 		// check to ensure not going over 19 digit limit
 		if(i >= 20){
@@ -498,10 +484,6 @@ int encrypt(char *plaintext_msg, int plaintext_msg_length, char *cipherkey_msg, 
 	}
 
 	ciphertext_msg[i] = '\n';
-
-	// testing
-	printf("ciphertext_msg: %s\n", ciphertext_msg);
-	fflush(stdout);
 
 	return 0;
 }

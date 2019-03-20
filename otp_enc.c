@@ -168,10 +168,7 @@ int main(int argc, char *argv[]){
 	send_file(sockfd, plaintext_msg, plaintext_filesize);
 	send_file(sockfd, cipherkey_msg, cipherkey_filesize);
 
-	// free memory allocated for plaintext
-	free(plaintext_msg);
-	plaintext_msg = NULL;
-	
+
 	// cleanup verify string
 	free(verify_status);
 	verify_status = NULL;
@@ -199,15 +196,43 @@ int main(int argc, char *argv[]){
 		close(sockfd);
 		exit(1);
 	}
-	
+
+	// get encrypted ciphertext from server
+	ciphertext_msg_length = get_msg_length(sockfd);
+
+	if(ciphertext_msg_length == -1){
+		close(sockfd);
+		exit(1);
+	}
+
+	ciphertext_msg = malloc(ciphertext_msg_length * sizeof(char));
+	if(ciphertext_msg == NULL){
+		fprintf(stderr, "Error allocating memory.\n");
+		close(sockfd);
+		exit(1);
+	}
+	memset(ciphertext_msg, '\0', ciphertext_msg_length);
+	recv_all(sockfd, ciphertext_msg, ciphertext_msg_length);
+
+	printf("%s", ciphertext_msg);
+	fflush(stdout);	
+
 	// cleanup verify string
 	free(verify_status);
 	verify_status = NULL;
 
-	// free memory allocated for plaintext
+	// free memory allocated for cipherkey
 	free(cipherkey_msg);
 	cipherkey_msg = NULL;
 
+	// free memory allocated for plaintext
+	free(plaintext_msg);
+	plaintext_msg = NULL;
+
+	// free memory allocated for ciphertex
+	free(ciphertext_msg);
+	ciphertext_msg = NULL;
+	
 	return 0;
 }
 
@@ -248,12 +273,12 @@ int connection_setup(char *host, char *port){
 	// loop through all the results and connect to the first we can
 	for(p = servinfo; p != NULL; p = p->ai_next){
 		if((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1){
-			perror("client: socket");
+			//perror("client: socket");
 			continue;
 		}
 
 		if(connect(sockfd, p->ai_addr, p->ai_addrlen) == -1){
-			perror("client: connect");
+			//perror("client: connect");
 			close(sockfd);
 			continue;
 		}
@@ -268,7 +293,7 @@ int connection_setup(char *host, char *port){
 	}
 
 	inet_ntop(p->ai_family, get_in_addr((struct sockaddr *)p->ai_addr), s, sizeof s);
-	printf("client: connecting to %s\n", s);
+	//printf("client: connecting to %s\n", s);
 
 	freeaddrinfo(servinfo); // free up memory allocated to servinfo	
 
