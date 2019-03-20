@@ -26,6 +26,7 @@
 #include <arpa/inet.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include "numKey.h"
 
 #define BACKLOG 10    // how many pending connections queue will hold
 #define CHUNKSIZE 1000    // size of chunks that can be received
@@ -33,7 +34,11 @@
 void sigchld_handler(int s);
 void *get_in_addr(struct sockaddr *sa);
 int connection_setup(char *serv_port);
-int msg_length(int sockfd);
+int get_msg_length(int sockfd);
+ssize_t recv_all(int sockfd, char *msg, int msg_length);
+int send_all(int sockfd, char *outgoing_buffer, int *total_buffer_size);
+void send_file(int data_sockfd, char *input_file, size_t file_size);
+int encrypt(char *plaintext_msg, int plaintext_msg_length, char *cipherkey_msg, char *ciphertext_msg);
 
 int main(int argc, char *argv[]){
 
@@ -47,8 +52,19 @@ int main(int argc, char *argv[]){
 	socklen_t sin_size;
 	char s[INET6_ADDRSTRLEN];
 
-	// variables for data connecton setup
-	char recv_buffer[CHUNKSIZE];    // holds message coming from client
+	// variables for msg's 
+	char *verify_msg = NULL;
+	int verify_msg_length = 0;
+	char *fail_msg = "5 FAIL\0";
+	int fail_msg_length = 7;
+	char *pass_msg = "5 PASS\0";
+	int pass_msg_length = 7;
+	char *plaintext_msg = NULL;    // holds unencrypted msg
+	int plaintext_msg_length = 0;
+	char *ciphertext_msg = NULL;    // holds encrypted msg
+	int ciphertext_msg_length = 0;    // holds size of msg's
+	char *cipherkey_msg = NULL;
+	int cipherkey_msg_length = 0;
 
 	// get port num for server to run on from cmd line arg
 	serv_port = argv[1];
@@ -75,17 +91,120 @@ int main(int argc, char *argv[]){
 		if (!fork()) { // this is the child proces!)s
 			close(sockfd); // child doesn't need the listener
 
-			// BUFFER //
-			// get buffer from client
+			// VERIFYING CLIENT PROG -> otp_enc
+			// get length of verifying msg
+			verify_msg_length = get_msg_length(new_fd);
+
+			if(verify_msg_length == -1){
+				close(new_fd);
+			}
+
+			// allocate enough mem for verify msg
+			verify_msg = malloc(verify_msg_length * sizeof(char));
+			memset(verify_msg, '\0', verify_msg_length * sizeof(char));
+		
+			// check allocation
+			if(verify_msg == NULL){
+				printf("Error allocating memory.\n");
+				return 1;
+			}
+
+			// get verify msg
+			recv_all(new_fd, verify_msg, verify_msg_length);
+
+			// check verify msg
+			if(strcmp(verify_msg, "otp_enc\0") != 0){
+				send_all(new_fd, fail_msg, &fail_msg_length);
+			}
+			else{
+				send_all(new_fd, pass_msg, &pass_msg_length);
+			}
+
+			// cleanup verify string
+			free(verify_msg);
+			verify_msg = NULL;
+
+			// get length of plaintext msg incoming
+			plaintext_msg_length = get_msg_length(new_fd);
+
+			if(plaintext_msg_length == -1){
+				close(new_fd);
+			}
+
+			// testing
+			printf("plaintext lengt: %d\n", plaintext_msg_length);
+			fflush(stdout);
+
+			// allocate enough mem for plaintext msg
+			plaintext_msg = malloc(plaintext_msg_length * sizeof(char));
+			memset(plaintext_msg, '\0', plaintext_msg_length * sizeof(char));
 			
-			//if(recv(new_fd, recv_buffer, 1, 0) == -1)
-			//	perror("receive");
+			// check allocation
+			if(plaintext_msg == NULL){
+				printf("Error allocating memory.\n");
+				return 1;
+			}
+			
+			// get plaintext msg
+			recv_all(new_fd, plaintext_msg, plaintext_msg_length);
 
-			//recv_buffer[1] = '\0';
+			// testing
+			printf("Plaintext: %s\n", plaintext_msg);
+			fflush(stdout);		
 
-			//printf("%s\n", recv_buffer);
+			// get length of cipherkey msg incoming
+			cipherkey_msg_length = get_msg_length(new_fd);
 
-			msg_length(new_fd);
+			// allocate enough mem for plaintext msg
+			cipherkey_msg = malloc(cipherkey_msg_length * sizeof(char));
+			memset(cipherkey_msg, '\0', cipherkey_msg_length * sizeof(char));
+			
+			// check allocation
+			if(cipherkey_msg == NULL){
+				printf("Error allocating memory.\n");
+				return 1;
+			}
+			
+			// get plaintext msg
+			recv_all(new_fd, cipherkey_msg, cipherkey_msg_length);
+
+			// testing
+			printf("Cipherkey: %s\n", cipherkey_msg);
+			fflush(stdout);
+	
+			// encode msg
+			ciphertext_msg_length = plaintext_msg_length;
+			
+			ciphertext_msg = malloc(ciphertext_msg_length * sizeof(char));
+			memset(ciphertext_msg, '\0', ciphertext_msg_length * sizeof(char));
+
+			// check allocation
+			if(ciphertext_msg == NULL){
+				printf("Error allocating memory.\n");
+				return 1;
+			}
+
+			if(encrypt(plaintext_msg, plaintext_msg_length, cipherkey_msg, ciphertext_msg) == 1){
+				send_all(new_fd, fail_msg, &fail_msg_length);
+				close(new_fd);
+			}
+			else{
+				send_all(new_fd, pass_msg, &pass_msg_length);
+			}
+
+			send_file(new_fd, ciphertext_msg, ciphertext_msg_length);
+			
+			// cleanup plaintext msg
+			free(plaintext_msg);
+			plaintext_msg = NULL;
+
+			// cleanup cipherkey msg
+			free(cipherkey_msg);
+			cipherkey_msg = NULL;
+	
+			// cleanup ciphertext msg
+			free(ciphertext_msg);
+			ciphertext_msg = NULL;
 
 			close(new_fd);    // close out control connection
 
@@ -193,27 +312,32 @@ int connection_setup(char *serv_port){
  * Returns: size of the incoming msg (without the prepended size)
  * Note: Can only return numbers with less than 19 or less digits.
 */
-int msg_length(int sockfd){
+int get_msg_length(int sockfd){
 
 	// var setup
 	char str_msg_length[20];    // only holds numbers with 19or less digits
 	int msg_length = 0;
 	char digit[1];
 	int i = 0;
+	int numbytes;
 
 	// get all the digits from the prepended msg length on msg
-	recv(sockfd, digit, 1, 0);
+	numbytes = recv(sockfd, digit, 1, 0);
+
+	if(numbytes == 0){
+		fprintf(stderr, "Connection Closed\n");
+		return -1;
+	}
 
 	while(digit[0] != ' '){
-
+		// testing
+		printf("%c\n", digit[0]);
+		
 		// check to ensure not going over 19 digit limit
 		if(i >= 20){
 			printf("Error! Message to to large.\n");
 			exit(1);
 		}
-
-		// testing
-		printf("i in msg_lengt: %d\n", i);
 
 		// add to string
 		str_msg_length[i] = digit[0];
@@ -225,9 +349,6 @@ int msg_length(int sockfd){
 
 	str_msg_length[++i] = '\0';
 
-	// testing
-	printf("str_msg_length: %s\n", str_msg_length);
-
 	msg_length = atoi(str_msg_length);
 
 	if(msg_length == 0){
@@ -235,13 +356,39 @@ int msg_length(int sockfd){
 		exit(1);
 	}
 	
-	// testing
-	printf("msg_length: %d\n", msg_length);
-
 	return msg_length;
 }
 
-/*
+/* Description: gets entire message
+ * Arugments: the socket fd, string that holds the message, and msg length
+ * Returns: length of msg
+*/
+ssize_t recv_all(int sockfd, char *msg, int msg_length){
+	
+	char recv_buffer[CHUNKSIZE];
+	ssize_t chunk_length = 0;
+	ssize_t total_chunk_length = 0;
+
+	while(total_chunk_length < msg_length){
+
+		// get chunk
+		chunk_length = recv(sockfd, recv_buffer, CHUNKSIZE, 0);
+		
+		// move buffer to msg
+		if(total_chunk_length == 0){
+			strcpy(msg, recv_buffer);
+		}
+		else{
+			strcat(msg, recv_buffer);
+		}
+
+		total_chunk_length += chunk_length;
+	}
+
+	return total_chunk_length;
+
+}
+
 // Description: sends the entire buffer
 // Argument(s)s: socket fd for data connection, buffer, and total buffer size
 // (with buffer length prepended)
@@ -267,9 +414,7 @@ int send_all(int data_sockfd, char *outgoing_buffer, int *total_buffer_size){
 
 	return send_status == -1 ? -1:0;    // conditional '?' operator, kind of like if/else
 }
-*/
 
-/*
 // Description: builds buffer to send working directory to client
 // Argument(s): socket fd for data connection, array holding filenames and
 // number of files in directory
@@ -312,4 +457,51 @@ void send_file(int data_sockfd, char *input_file, size_t file_size){
 	free(outgoing_buffer);
 	free(str_outgoing_buffer_size);
 }
-*/
+
+// Description: Encrypts plaintext file using cipherkey provided
+// Arguments: The plaintext msg, the length of the plaintext, the cipherkey,
+// and space to hold the ciphertext
+// Returns: Returns 1 if invalid character was used in the plaintext, otherwise 0
+int encrypt(char *plaintext_msg, int plaintext_msg_length, char *cipherkey_msg, char *ciphertext_msg){
+
+	// var setup
+	int i;    // traveler
+	int plain_key_num, cipher_key_num, plain_cipher_total;
+	char ciphertext_char;
+
+	for(i = 0; i < plaintext_msg_length - 1; i++){
+		
+		// get plaintext num
+		if((plain_key_num = keyToNum(plaintext_msg[i])) == -1){
+			printf("Error! Key not found.\n");
+			return 1;
+		}
+
+		// get cipherkey num
+		if((cipher_key_num = keyToNum(cipherkey_msg[i])) == -1){
+			printf("Error! Key not found.\n");
+			return 1;
+		}
+
+		// total of plaintext cipher nums
+		plain_cipher_total = cipher_key_num + plain_key_num;
+
+		if(plain_cipher_total > 26){
+			plain_cipher_total -= 27;
+		}
+	
+		// get char for encrypted key
+		ciphertext_char = numToKey(plain_cipher_total);
+
+		ciphertext_msg[i] = ciphertext_char;
+
+	}
+
+	ciphertext_msg[i] = '\n';
+
+	// testing
+	printf("ciphertext_msg: %s\n", ciphertext_msg);
+	fflush(stdout);
+
+	return 0;
+}

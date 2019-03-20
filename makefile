@@ -16,11 +16,11 @@ otp_enc_d.o: otp_enc_d.c
 keygen: keygen.o numKey.o
 	$(CC) $(CFLAGS) -o keygen keygen.o numKey.o
 
-otp_enc: otp_enc.o
-	$(CC) $(CFLAGS) -o otp_enc otp_enc.o
+otp_enc: otp_enc.o numKey.o
+	$(CC) $(CFLAGS) -o otp_enc otp_enc.o numKey.o
 
-otp_enc_d: otp_enc_d.o
-	$(CC) $(CFLAGS) -o otp_enc_d otp_enc_d.o
+otp_enc_d: otp_enc_d.o numKey.o
+	$(CC) $(CFLAGS) -o otp_enc_d otp_enc_d.o numKey.o
 
 clean:
-	rm keygen *.o
+	rm otp_enc otp_enc_d keygen *.o

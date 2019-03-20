@@ -27,7 +27,7 @@ char numToKey(int keyIndex){
 		return NUMKEY[keyIndex];
 	}
 	else{
-		printf("Error! Invalid key index.");
+		printf("Error! Invalid key index.\n");
 		exit(1);
 	}
 }
