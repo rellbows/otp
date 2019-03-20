@@ -42,7 +42,7 @@ int check_keys(char *msg, int msg_length);
 int main(int argc, char *argv[]){
 
 	// holds socket descriptor setup by connection_setup()
-	int sockfd = connection_setup("localhost", argv[1]);
+	int sockfd = connection_setup("localhost", argv[3]);
 
 	// for verifying otp_enc -> otp_enc_d
 	char *otp_enc_msg = "8 otp_enc\0";
@@ -51,8 +51,8 @@ int main(int argc, char *argv[]){
 	int verify_status_length = 0;
 
 	// for getting plaintext, cipherkey files
-	char *plaintext_filename = argv[2];
-	char *cipherkey_filename = argv[3];
+	char *plaintext_filename = argv[1];
+	char *cipherkey_filename = argv[2];
 	size_t plaintext_filesize, cipherkey_filesize;
 	FILE *input_fstream = NULL;
 
